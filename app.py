@@ -27,7 +27,7 @@ def configure_page() -> None:
         page_title="Herren 1 · Matchanalyse",
         page_icon="🏐",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="auto",
     )
     st.markdown(
         """
@@ -51,6 +51,50 @@ def configure_page() -> None:
         }
         .stButton > button, .stDownloadButton > button {
             border-color: rgba(187, 105, 255, .56);
+        }
+        [data-testid="stAltairChart"] {
+            width: 100%;
+            touch-action: manipulation;
+        }
+        div[data-baseweb="tab-list"] {
+            overflow-x: auto;
+            flex-wrap: nowrap;
+            scrollbar-width: thin;
+        }
+        button[data-baseweb="tab"] { white-space: nowrap; }
+        @media (max-width: 700px) {
+            [data-testid="stMainBlockContainer"] {
+                padding: .7rem .65rem 4rem;
+            }
+            h1 { font-size: 1.7rem !important; line-height: 1.12 !important; }
+            h2 { font-size: 1.4rem !important; }
+            h3 { font-size: 1.15rem !important; }
+            p, label, [data-testid="stCaptionContainer"] {
+                line-height: 1.35;
+            }
+            .stButton > button, .stDownloadButton > button {
+                min-height: 3rem;
+                width: 100%;
+                padding: .65rem .75rem;
+                font-size: 1rem;
+                touch-action: manipulation;
+            }
+            div[data-baseweb="select"] > div,
+            div[data-baseweb="input"] > div,
+            .stTextInput input,
+            .stNumberInput input {
+                min-height: 3rem;
+                font-size: 16px !important;
+            }
+            div[data-testid="stMetric"] {
+                padding: .6rem .7rem;
+            }
+            div[data-testid="stHorizontalBlock"] {
+                gap: .55rem;
+            }
+            [data-testid="stAltairChart"] > div {
+                max-width: 100% !important;
+            }
         }
         </style>
         """,

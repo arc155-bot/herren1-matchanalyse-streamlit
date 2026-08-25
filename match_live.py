@@ -311,7 +311,7 @@ def landing_cell_label(cell_x: int, cell_y: int) -> str:
         elif cell_y > 8:
             directions.append("hinter der Grundlinie")
         return "OUT · " + " / ".join(directions)
-    return f"Feld · Meter {cell_x + 1} von links · Meter {cell_y + 1} ab Netz"
+    return "Ziel im Feld markiert"
 
 
 def landing_grid_chart(selected_cell: tuple[int, int] | None = None) -> alt.Chart:
@@ -349,13 +349,13 @@ def landing_grid_chart(selected_cell: tuple[int, int] | None = None) -> alt.Char
             x=alt.X(
                 "x0:Q",
                 scale=alt.Scale(domain=[-1, 10], nice=False),
-                axis=alt.Axis(title="Breite · Meter", values=list(range(-1, 11)), grid=False),
+                axis=None,
             ),
             x2="x1:Q",
             y=alt.Y(
                 "y0:Q",
                 scale=alt.Scale(domain=[-1, 10], nice=False),
-                axis=alt.Axis(title="Entfernung ab Netz · Meter", values=list(range(-1, 11)), grid=False),
+                axis=None,
             ),
             y2="y1:Q",
             color=alt.condition(
@@ -373,7 +373,6 @@ def landing_grid_chart(selected_cell: tuple[int, int] | None = None) -> alt.Char
                 alt.value(2.4),
                 alt.StrokeWidth("border_width:Q", legend=None),
             ),
-            tooltip=[alt.Tooltip("zone:N", title="Ziel")],
         )
         .add_params(selection)
     )
@@ -394,7 +393,7 @@ def landing_grid_chart(selected_cell: tuple[int, int] | None = None) -> alt.Char
 def service_origin_label(cell_x: int) -> str:
     if not 0 <= int(cell_x) < 9:
         raise ValueError("service origin must be inside the 9-metre service zone")
-    return f"Serviceort · {int(cell_x) + 1}. Meter von links hinter der Grundlinie"
+    return "Serviceort markiert"
 
 
 def service_origin_chart(selected_cell: int | None = None) -> alt.Chart:
@@ -426,11 +425,7 @@ def service_origin_chart(selected_cell: int | None = None) -> alt.Chart:
             x=alt.X(
                 "x0:Q",
                 scale=alt.Scale(domain=[0, 9], nice=False),
-                axis=alt.Axis(
-                    title="Breite hinter der Grundlinie · Meter",
-                    values=list(range(10)),
-                    grid=False,
-                ),
+                axis=None,
             ),
             x2="x1:Q",
             y=alt.Y(
@@ -454,7 +449,6 @@ def service_origin_chart(selected_cell: int | None = None) -> alt.Chart:
                 alt.value(2.4),
                 alt.StrokeWidth("border_width:Q", legend=None),
             ),
-            tooltip=[alt.Tooltip("zone:N", title="Serviceort")],
         )
         .add_params(selection)
     )
@@ -526,23 +520,18 @@ def service_placement_chart(
             x=alt.X(
                 "x0:Q",
                 scale=alt.Scale(domain=[-1, 10], nice=False),
-                axis=alt.Axis(title="Breite · Meter", values=list(range(-1, 11)), grid=False),
+                axis=None,
             ),
             x2="x1:Q",
             y=alt.Y(
                 "y0:Q",
                 scale=alt.Scale(domain=[-2, 10], nice=False),
-                axis=alt.Axis(
-                    title="Entfernung ab Netz · Meter",
-                    values=[-1, 1, 3, 5, 7, 9],
-                    grid=False,
-                ),
+                axis=None,
             ),
             y2="y1:Q",
             color=alt.Color("fill:N", scale=None, legend=None),
             stroke=alt.Stroke("border:N", scale=None, legend=None),
             strokeWidth=alt.StrokeWidth("border_width:Q", legend=None),
-            tooltip=[alt.Tooltip("zone:N", title="Auswahl")],
         )
         .add_params(selection)
     )
@@ -664,7 +653,7 @@ def service_trajectory_svg(
 def first_contact_target_label(cell_x: int, cell_y: int) -> str:
     if landing_cell_is_out(cell_x, cell_y):
         return "Annahmefehler · Ziel liegt im 1-m-Rand ausserhalb des Feldes"
-    return f"Annahmeziel · {cell_x + 1}. Meter von links · {cell_y + 1}. Meter ab Netz"
+    return "Annahmeziel im Feld markiert"
 
 
 FIRST_CONTACT_QUALITY_ZONES = (
@@ -745,21 +734,13 @@ def first_contact_target_chart(selected_cell: tuple[int, int] | None = None) -> 
             x=alt.X(
                 "x0:Q",
                 scale=alt.Scale(domain=[-1, 10], nice=False),
-                axis=alt.Axis(
-                    title="Breite · Meter",
-                    values=list(range(-1, 11)),
-                    grid=False,
-                ),
+                axis=None,
             ),
             x2="x1:Q",
             y=alt.Y(
                 "y0:Q",
                 scale=alt.Scale(domain=[10, -1], nice=False),
-                axis=alt.Axis(
-                    title="Entfernung ab Netz · Meter",
-                    values=list(range(-1, 11)),
-                    grid=False,
-                ),
+                axis=None,
             ),
             y2="y1:Q",
             color=alt.condition(
@@ -777,7 +758,6 @@ def first_contact_target_chart(selected_cell: tuple[int, int] | None = None) -> 
                 alt.value(2.4),
                 alt.StrokeWidth("border_width:Q", legend=None),
             ),
-            tooltip=[alt.Tooltip("zone:N", title="Annahmeziel")],
         )
         .add_params(selection)
     )
@@ -1070,7 +1050,7 @@ def _render_first_contact_target_picker(*, context: str) -> tuple[int, int] | No
     )
     event = st.altair_chart(
         first_contact_target_chart(selected_cell),
-        width="content",
+        width="stretch",
         key=f"{context}_first_contact_target_chart",
         on_select="rerun",
         selection_mode="first_contact_cell",
@@ -1105,7 +1085,7 @@ def _render_landing_picker(
     )
     event = st.altair_chart(
         landing_grid_chart(selected_cell),
-        width="content",
+        width="stretch",
         key=f"{context}_{attack_origin}_{attack_type}_landing_chart",
         on_select="rerun",
         selection_mode="landing_cell",
@@ -1131,7 +1111,7 @@ def _render_service_origin_picker(*, context: str) -> int | None:
     selected_cell = st.pills(
         "Serviceort hinter der Grundlinie",
         options=list(range(9)),
-        format_func=lambda cell_x: f"{cell_x + 1} m",
+        format_func=lambda cell_x: f"Bereich {cell_x + 1}",
         key=value_key,
     )
     if selected_cell is None:
@@ -1150,7 +1130,7 @@ def _render_service_target_picker(*, context: str) -> tuple[int, int] | None:
     )
     event = st.altair_chart(
         landing_grid_chart(selected_cell),
-        width="content",
+        width="stretch",
         key=f"{context}_service_target_chart",
         on_select="rerun",
         selection_mode="landing_cell",
@@ -1183,7 +1163,7 @@ def _render_service_placement_picker(
     )
     event = st.altair_chart(
         service_placement_chart(selected_target, selected_origin),
-        width="content",
+        width="stretch",
         key=f"{context}_service_placement_chart",
         on_select="rerun",
         selection_mode="service_cell",
@@ -4489,11 +4469,7 @@ def _render_our_contact(session: dict[str, Any], roster: tuple[Any, ...]) -> Non
         summary_col, edit_col = st.columns([4, 1])
         summary_col.success(
             f"Abnahme · {receiver_label} · {FIRST_CONTACT_LABELS[first_quality].split(' · ')[0]}"
-            + (
-                f" · Ziel {int(pending['first_contact_x']) + 1}/{int(pending['first_contact_y']) + 1} m"
-                if pending.get("first_contact_x") is not None and pending.get("first_contact_y") is not None
-                else ""
-            )
+            + (" · Ziel markiert" if pending.get("first_contact_x") is not None else "")
             + (" · zu tief" if pending.get("first_contact_too_low") else "")
         )
         if edit_col.button("Ändern", width="stretch", key=f"{context}_edit_first"):
