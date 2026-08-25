@@ -42,7 +42,7 @@ def configure_page() -> None:
             background: linear-gradient(180deg, #10071b 0%, #09050f 100%);
             border-right: 1px solid rgba(190, 125, 255, .22);
         }
-        h1, h2, h3, h4 { letter-spacing: -.02em; color: #f7f3fb; }
+        h1, h2, h3, h4 { letter-spacing: -.02em; color: #f7f3fb !important; }
         [data-testid="stCaptionContainer"] { color: rgba(244, 238, 248, .74); }
         .stApp [data-testid="stMarkdownContainer"] > p { color: rgba(250, 247, 252, .9); }
         .stButton button p, .stDownloadButton button p { color: inherit !important; }
