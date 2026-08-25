@@ -43,9 +43,7 @@ def configure_page() -> None:
             border-right: 1px solid rgba(190, 125, 255, .22);
         }
         h1, h2, h3, h4 { letter-spacing: -.02em; color: #f7f3fb !important; }
-        [data-testid="stCaptionContainer"] { color: rgba(244, 238, 248, .74); }
-        .stApp [data-testid="stMarkdownContainer"] > p { color: rgba(250, 247, 252, .9); }
-        .stButton button p, .stDownloadButton button p { color: inherit !important; }
+        [data-testid="stCaptionContainer"] { color: rgba(244, 238, 248, .78) !important; }
         div[data-testid="stMetric"] {
             border: 1px solid rgba(190, 125, 255, .20);
             border-radius: 14px;
@@ -53,7 +51,54 @@ def configure_page() -> None:
             background: rgba(18, 9, 30, .76);
         }
         .stButton > button, .stDownloadButton > button {
-            border-color: rgba(187, 105, 255, .56);
+            border-color: rgba(196, 129, 255, .62);
+            background: #21132e;
+            color: #faf7fc;
+            font-weight: 650;
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover {
+            border-color: #d8b4fe;
+            background: #2c1740;
+            color: #ffffff;
+        }
+        .stButton > button:disabled, .stDownloadButton > button:disabled {
+            background: #15101b;
+            color: #8f8796;
+            border-color: #3b3044;
+            opacity: 1;
+        }
+        button[kind="primary"] {
+            background: linear-gradient(135deg, #7e22ce, #a855f7) !important;
+            color: #ffffff !important;
+            border-color: #c084fc !important;
+        }
+        button[data-baseweb="tab"] {
+            color: #d8cfdf;
+        }
+        button[data-baseweb="tab"][aria-selected="true"] {
+            color: #ffffff;
+        }
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"] > div,
+        .stTextInput input,
+        .stNumberInput input,
+        textarea {
+            background: #171021 !important;
+            color: #faf7fc !important;
+            border-color: #5c3a73 !important;
+        }
+        div[data-baseweb="select"] * {
+            color: #faf7fc;
+        }
+        [data-testid="stPills"] button {
+            background: #21132e;
+            color: #faf7fc;
+            border-color: #5c3a73;
+        }
+        [data-testid="stPills"] button[aria-pressed="true"] {
+            background: #7e22ce;
+            color: #ffffff;
+            border-color: #d8b4fe;
         }
         [data-testid="stAltairChart"] {
             width: 100%;
