@@ -42,7 +42,10 @@ def configure_page() -> None:
             background: linear-gradient(180deg, #10071b 0%, #09050f 100%);
             border-right: 1px solid rgba(190, 125, 255, .22);
         }
-        h1, h2, h3 { letter-spacing: -.02em; }
+        h1, h2, h3, h4 { letter-spacing: -.02em; color: #f7f3fb; }
+        [data-testid="stCaptionContainer"] { color: rgba(244, 238, 248, .74); }
+        .stApp [data-testid="stMarkdownContainer"] > p { color: rgba(250, 247, 252, .9); }
+        .stButton button p, .stDownloadButton button p { color: inherit !important; }
         div[data-testid="stMetric"] {
             border: 1px solid rgba(190, 125, 255, .20);
             border-radius: 14px;
@@ -64,7 +67,7 @@ def configure_page() -> None:
         button[data-baseweb="tab"] { white-space: nowrap; }
         @media (max-width: 700px) {
             [data-testid="stMainBlockContainer"] {
-                padding: .7rem .65rem 4rem;
+                padding: 1.65rem .65rem 4rem;
             }
             h1 { font-size: 1.7rem !important; line-height: 1.12 !important; }
             h2 { font-size: 1.4rem !important; }
