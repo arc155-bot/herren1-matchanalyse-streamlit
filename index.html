@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #111014;
+      background: #ffffff;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .shell {
+      overflow: hidden;
+      border: 1px solid #e5e0e8;
+      border-radius: 16px;
+      background: #ffffff;
+    }
+    .video-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #09090b;
+    }
+    #player { width: 100%; height: 100%; }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding: 12px;
+      background: #f8f7fa;
+    }
+    button {
+      min-height: 48px;
+      border: 1px solid #111014;
+      border-radius: 12px;
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    #startButton { color: #111014; background: #f6b4cd; }
+    #endButton { color: #ffffff; background: #7561a8; border-color: #7561a8; }
+    #timeoutButton { color: #111014; background: #ffffff; }
+    #substitutionButton { color: #ffffff; background: #111014; }
+    button:disabled { cursor: not-allowed; opacity: .42; }
+    .status {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 12px 12px;
+      color: #6f6875;
+      background: #f8f7fa;
+      font-size: 14px;
+    }
+    #clock { color: #111014; font-variant-numeric: tabular-nums; font-weight: 750; }
+    @media (max-width: 520px) {
+      .controls { grid-template-columns: 1fr; }
+      button { min-height: 52px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="video-wrap"><div id="player"></div></div>
+    <div class="controls">
+      <button id="startButton" type="button" disabled>Start Punkt</button>
+      <button id="endButton" type="button" disabled>Ende Punkt</button>
+      <button id="timeoutButton" type="button" disabled>Timeout markieren</button>
+      <button id="substitutionButton" type="button" disabled>Wechsel markieren</button>
+    </div>
+    <div class="status">
+      <span id="statusText">Video wird geladen …</span>
+      <span id="clock">00:00</span>
+    </div>
+  </div>
+
+  <script>
+    let player = null;
+    let playerReady = false;
+    let currentVideoId = "";
+    let pendingStart = null;
+    let pendingEnd = null;
+    let pendingMarker = false;
+    let lastResumeToken = null;
+    let lastSeekToken = null;
+    let lastSentTitle = "";
+    let latestArgs = {};
+
+    const startButton = document.getElementById("startButton");
+    const endButton = document.getElementById("endButton");
+    const timeoutButton = document.getElementById("timeoutButton");
+    const substitutionButton = document.getElementById("substitutionButton");
+    const statusText = document.getElementById("statusText");
+    const clock = document.getElementById("clock");
+
+    function sendMessage(type, payload) {
+      window.parent.postMessage(
+        Object.assign({ isStreamlitMessage: true, type: type }, payload || {}),
+        "*"
+      );
+    }
+
+    function setValue(value) {
+      sendMessage("streamlit:setComponentValue", { value: value, dataType: "json" });
+    }
+
+    function setHeight() {
+      sendMessage("streamlit:setFrameHeight", { height: document.body.scrollHeight });
+    }
+
+    function formatTime(seconds) {
+      const whole = Math.max(0, Math.floor(Number(seconds) || 0));
+      const hours = Math.floor(whole / 3600);
+      const minutes = Math.floor((whole % 3600) / 60);
+      const remaining = whole % 60;
+      if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`;
+      }
+      return `${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`;
+    }
+
+    function updateControls() {
+      startButton.disabled = !playerReady || pendingStart !== null || pendingMarker;
+      endButton.disabled = !playerReady || pendingStart === null || pendingEnd !== null || pendingMarker;
+      timeoutButton.disabled = !playerReady || pendingStart !== null || pendingEnd !== null || pendingMarker;
+      substitutionButton.disabled = !playerReady || pendingStart !== null || pendingEnd !== null || pendingMarker;
+      if (pendingMarker) {
+        statusText.textContent = "Markierung unter dem Video ausfüllen";
+      } else if (pendingEnd !== null) {
+        statusText.textContent = `Punkt ${formatTime(pendingStart)}–${formatTime(pendingEnd)} · Gewinnerin wählen`;
+      } else if (pendingStart !== null) {
+        statusText.textContent = `Punkt läuft seit ${formatTime(pendingStart)}`;
+      } else if (playerReady) {
+        statusText.textContent = "Beim Servicebeginn auf Start Punkt drücken";
+      }
+    }
+
+    function sendVideoMetadata() {
+      if (
+        !playerReady || !player || pendingStart !== null || pendingMarker ||
+        typeof player.getVideoData !== "function"
+      ) return;
+      const videoData = player.getVideoData() || {};
+      const title = String(videoData.title || "").trim();
+      if (!title || title === lastSentTitle) return;
+      lastSentTitle = title;
+      setValue({ action: "metadata", title: title, nonce: Date.now() });
+    }
+
+    function applyArgs(args) {
+      latestArgs = args || {};
+      pendingStart = latestArgs.pending_start === null || latestArgs.pending_start === undefined
+        ? null
+        : Number(latestArgs.pending_start);
+      pendingEnd = latestArgs.pending_end === null || latestArgs.pending_end === undefined
+        ? null
+        : Number(latestArgs.pending_end);
+      pendingMarker = Boolean(latestArgs.pending_marker);
+      if (latestArgs.video_title) {
+        lastSentTitle = String(latestArgs.video_title);
+      }
+
+      const nextVideoId = String(latestArgs.video_id || "");
+      if (playerReady && nextVideoId && nextVideoId !== currentVideoId) {
+        currentVideoId = nextVideoId;
+        player.loadVideoById({
+          videoId: currentVideoId,
+          startSeconds: Number(latestArgs.start_seconds || 0),
+        });
+      }
+
+      if (playerReady && latestArgs.seek_token !== lastSeekToken) {
+        lastSeekToken = latestArgs.seek_token;
+        player.seekTo(Number(latestArgs.start_seconds || 0), true);
+      }
+
+      if (playerReady && latestArgs.resume_token !== lastResumeToken) {
+        if (lastResumeToken !== null) {
+          player.playVideo();
+        }
+        lastResumeToken = latestArgs.resume_token;
+      }
+      updateControls();
+      setHeight();
+    }
+
+    window.onYouTubeIframeAPIReady = function () {
+      currentVideoId = String(latestArgs.video_id || "");
+      player = new YT.Player("player", {
+        width: "100%",
+        height: "100%",
+        videoId: currentVideoId,
+        playerVars: {
+          playsinline: 1,
+          rel: 0,
+          start: Math.floor(Number(latestArgs.start_seconds || 0)),
+        },
+        events: {
+          onReady: function () {
+            playerReady = true;
+            lastResumeToken = latestArgs.resume_token;
+            lastSeekToken = latestArgs.seek_token;
+            updateControls();
+            setHeight();
+            if (pendingStart !== null && pendingEnd === null) {
+              player.playVideo();
+            } else {
+              window.setTimeout(sendVideoMetadata, 300);
+            }
+          },
+          onStateChange: function () {
+            if (pendingStart === null) sendVideoMetadata();
+          },
+        },
+      });
+    };
+
+    startButton.addEventListener("click", function () {
+      if (!playerReady || pendingStart !== null) return;
+      pendingStart = Math.max(0, Math.floor(player.getCurrentTime()));
+      pendingEnd = null;
+      updateControls();
+      setValue({ action: "start", seconds: pendingStart, nonce: Date.now() });
+    });
+
+    endButton.addEventListener("click", function () {
+      if (!playerReady || pendingStart === null || pendingEnd !== null) return;
+      pendingEnd = Math.max(pendingStart + 1, Math.floor(player.getCurrentTime()));
+      player.pauseVideo();
+      updateControls();
+      setValue({ action: "end", seconds: pendingEnd, nonce: Date.now() });
+    });
+
+    function markVideoEvent(action) {
+      if (!playerReady || pendingStart !== null || pendingEnd !== null || pendingMarker) return;
+      const seconds = Math.max(0, Math.floor(player.getCurrentTime()));
+      pendingMarker = true;
+      player.pauseVideo();
+      updateControls();
+      setValue({ action: action, seconds: seconds, nonce: Date.now() });
+    }
+
+    timeoutButton.addEventListener("click", function () {
+      markVideoEvent("timeout");
+    });
+
+    substitutionButton.addEventListener("click", function () {
+      markVideoEvent("substitution");
+    });
+
+    window.addEventListener("message", function (event) {
+      if (!event.data || event.data.type !== "streamlit:render") return;
+      applyArgs(event.data.args || {});
+    });
+
+    window.setInterval(function () {
+      if (playerReady && player && typeof player.getCurrentTime === "function") {
+        clock.textContent = formatTime(player.getCurrentTime());
+      }
+    }, 250);
+
+    sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    setHeight();
+
+    const youtubeApi = document.createElement("script");
+    youtubeApi.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(youtubeApi);
+  </script>
+</body>
+</html>
