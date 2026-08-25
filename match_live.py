@@ -344,7 +344,7 @@ def landing_grid_chart(selected_cell: tuple[int, int] | None = None) -> alt.Char
     )
     grid = (
         alt.Chart(alt.Data(values=cells))
-        .mark_rect()
+        .mark_rect(tooltip=False)
         .encode(
             x=alt.X(
                 "x0:Q",
@@ -420,7 +420,7 @@ def service_origin_chart(selected_cell: int | None = None) -> alt.Chart:
     )
     grid = (
         alt.Chart(alt.Data(values=cells))
-        .mark_rect()
+        .mark_rect(tooltip=False)
         .encode(
             x=alt.X(
                 "x0:Q",
@@ -515,7 +515,7 @@ def service_placement_chart(
     )
     grid = (
         alt.Chart(alt.Data(values=cells))
-        .mark_rect()
+        .mark_rect(tooltip=False)
         .encode(
             x=alt.X(
                 "x0:Q",
@@ -729,7 +729,7 @@ def first_contact_target_chart(selected_cell: tuple[int, int] | None = None) -> 
     )
     grid = (
         alt.Chart(alt.Data(values=cells))
-        .mark_rect()
+        .mark_rect(tooltip=False)
         .encode(
             x=alt.X(
                 "x0:Q",
