@@ -27,7 +27,7 @@ def configure_page() -> None:
         page_title="Herren 1 · Matchanalyse",
         page_icon="🏐",
         layout="wide",
-        initial_sidebar_state="auto",
+        initial_sidebar_state="collapsed",
     )
     st.markdown(
         """
@@ -41,6 +41,25 @@ def configure_page() -> None:
         [data-testid="stSidebar"] {
             background: linear-gradient(180deg, #10071b 0%, #09050f 100%);
             border-right: 1px solid rgba(190, 125, 255, .22);
+        }
+        [data-testid="stExpandSidebarButton"],
+        [data-testid="stSidebarCollapseButton"] button {
+            width: 2.65rem !important;
+            height: 2.65rem !important;
+            border-radius: 999px !important;
+            border: 1px solid #d8b4fe !important;
+            background: linear-gradient(135deg, #7e22ce, #a855f7) !important;
+            box-shadow: 0 0 18px rgba(168, 85, 247, .42) !important;
+        }
+        [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"],
+        [data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"] {
+            color: #ffffff !important;
+            font-size: 1.35rem !important;
+        }
+        [data-testid="stExpandSidebarButton"]:hover,
+        [data-testid="stSidebarCollapseButton"] button:hover {
+            border-color: #ffffff !important;
+            filter: brightness(1.12);
         }
         h1, h2, h3, h4 { letter-spacing: -.02em; color: #f7f3fb !important; }
         [data-testid="stCaptionContainer"] { color: rgba(244, 238, 248, .78) !important; }
