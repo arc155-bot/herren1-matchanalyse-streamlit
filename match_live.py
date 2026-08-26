@@ -2457,63 +2457,137 @@ def _render_video_cutter(session: dict[str, Any], roster: tuple[Any, ...]) -> No
             )
 
 
-def _render_analysis_video_clip(session: dict[str, Any]) -> None:
-    state = session.get("state", {})
-    if "analysis_video_session_id" in state:
-        source_session_id = state.get("analysis_video_session_id")
-    else:
-        source_session_id = session.get("id") if _video_sources_by_set(session) else None
-    if source_session_id is None:
-        return
-    source_session = get_match_session(int(source_session_id))
-    if not source_session or not _video_sources_by_set(source_session):
-        st.info("Die ausgewählten Satzvideos sind nicht mehr verfügbar. Die Analyse geht ohne Video weiter.")
-        return
-    target = (int(state.get("current_set") or 1), int(state.get("rally_number") or 1))
-    video_source = _video_source_for_set(source_session, target[0])
-    if not video_source:
-        st.info(
-            f"Für Satz {target[0]} ist noch kein Video hinterlegt. "
-            "Du kannst trotzdem ohne Video weiteranalysieren."
-        )
-        return
-    video_url = video_source["url"]
-    segment = next(
-        (
-            item
-            for item in list_match_video_segments(session_id=int(source_session_id))
-            if (int(item["set_number"]), int(item["rally_number"])) == target
-        ),
-        None,
+def _render_cut_point_viewer() -> None:
+    st.markdown("### Geschnittene Punkte ansehen")
+    st.caption(
+        "Öffne diese Ansicht auf dem Laptop oder iPad. Auf dem Handy kannst du gleichzeitig "
+        "im Tab «Punkte analysieren» arbeiten. Beide Geräte lassen sich unabhängig bedienen."
     )
-    if not segment:
+
+    projects: list[dict[str, Any]] = []
+    segments_by_session: dict[int, list[dict[str, Any]]] = {}
+    for candidate in _video_source_sessions():
+        candidate_id = int(candidate["id"])
+        candidate_segments = sorted(
+            list_match_video_segments(session_id=candidate_id),
+            key=lambda item: (
+                int(item["set_number"]),
+                int(item["rally_number"]),
+                int(item["id"]),
+            ),
+        )
+        if not candidate_segments:
+            continue
+        projects.append(candidate)
+        segments_by_session[candidate_id] = candidate_segments
+
+    if not projects:
         st.info(
-            f"Für {_video_point_label(target)} gibt es keinen vorbereiteten Videoschnitt. "
-            "Du kannst trotzdem ohne Video weiteranalysieren."
+            "Noch keine geschnittenen Punkte vorhanden. Schneide zuerst im Tab «Video schneiden» "
+            "mindestens einen Punkt."
         )
         return
-    winner = TEAM_NAME if segment.get("winner") == "us" else source_session["opponent"]
-    video_title = video_source.get("title") or _video_fallback_title(video_url)
-    with st.expander(
-        f"🎬 {video_title} · {_video_point_label(target)} · {winner}",
-        expanded=True,
-    ):
-        st.video(
-            video_url,
-            start_time=int(segment["start_seconds"]),
-            end_time=int(segment["end_seconds"]),
+
+    project_map = {int(project["id"]): project for project in projects}
+    selected_session_id = int(
+        st.selectbox(
+            "Match",
+            options=list(project_map),
+            format_func=lambda session_id: _video_source_label(project_map.get(session_id)),
+            key="video_viewer_session_id",
         )
-        st.caption(
-            f"Vorbereiteter Spielstand nach diesem Punkt: {segment['our_score']}:{segment['opponent_score']}"
+    )
+    selected_session = project_map[selected_session_id]
+    all_segments = segments_by_session[selected_session_id]
+    available_sets = sorted({int(item["set_number"]) for item in all_segments})
+    selected_set = int(
+        st.segmented_control(
+            "Satz",
+            options=available_sets,
+            default=available_sets[0],
+            format_func=lambda set_number: f"Satz {set_number}",
+            key=f"video_viewer_set_{selected_session_id}",
+            width="stretch",
         )
-        events_before_rally = [
-            item
-            for item in list_match_video_events(session_id=int(source_session_id))
-            if int(item["set_number"]) == target[0] and int(item["rally_number"]) == target[1]
-        ]
-        if events_before_rally:
-            event_texts = [row["Ereignis"] for row in _video_event_rows(source_session, events_before_rally)]
-            st.caption("Vor diesem Punkt: " + " · ".join(event_texts))
+    )
+    set_segments = [item for item in all_segments if int(item["set_number"]) == selected_set]
+    segment_map = {int(item["id"]): item for item in set_segments}
+    segment_ids = list(segment_map)
+    point_key = f"video_viewer_point_{selected_session_id}_{selected_set}"
+    if st.session_state.get(point_key) not in segment_ids:
+        st.session_state[point_key] = segment_ids[0]
+
+    def move_point(offset: int) -> None:
+        current_id = int(st.session_state.get(point_key) or segment_ids[0])
+        current_index = segment_ids.index(current_id) if current_id in segment_ids else 0
+        target_index = max(0, min(len(segment_ids) - 1, current_index + offset))
+        st.session_state[point_key] = segment_ids[target_index]
+
+    selected_segment_id = int(
+        st.selectbox(
+            "Punkt",
+            options=segment_ids,
+            format_func=lambda segment_id: (
+                f"Punkt {segment_map[segment_id]['rally_number']} · "
+                f"Stand {segment_map[segment_id]['our_score']}:{segment_map[segment_id]['opponent_score']}"
+            ),
+            key=point_key,
+        )
+    )
+    current_index = segment_ids.index(selected_segment_id)
+    previous_column, position_column, next_column = st.columns([1, 1, 1])
+    previous_column.button(
+        "← Vorheriger",
+        on_click=move_point,
+        args=(-1,),
+        disabled=current_index == 0,
+        width="stretch",
+        key=f"video_viewer_previous_{selected_session_id}_{selected_set}",
+    )
+    position_column.markdown(
+        f"<div style='text-align:center;padding-top:.55rem'>{current_index + 1} / {len(segment_ids)}</div>",
+        unsafe_allow_html=True,
+    )
+    next_column.button(
+        "Nächster →",
+        on_click=move_point,
+        args=(1,),
+        disabled=current_index == len(segment_ids) - 1,
+        width="stretch",
+        key=f"video_viewer_next_{selected_session_id}_{selected_set}",
+    )
+
+    segment = segment_map[selected_segment_id]
+    video_source = _video_source_for_set(selected_session, selected_set)
+    if not video_source:
+        st.warning(f"Für Satz {selected_set} ist kein Video mehr hinterlegt.")
+        return
+
+    winner = TEAM_NAME if segment.get("winner") == "us" else selected_session["opponent"]
+    st.markdown(
+        f"#### Satz {selected_set} · Punkt {segment['rally_number']} · "
+        f"{segment['our_score']}:{segment['opponent_score']}"
+    )
+    st.caption(
+        f"Punkt für {winner} · "
+        f"{format_video_timestamp(int(segment['start_seconds']))}–"
+        f"{format_video_timestamp(int(segment['end_seconds']))}"
+    )
+    st.video(
+        video_source["url"],
+        start_time=int(segment["start_seconds"]),
+        end_time=int(segment["end_seconds"]),
+    )
+
+    events_before_rally = [
+        item
+        for item in list_match_video_events(session_id=selected_session_id)
+        if int(item["set_number"]) == selected_set
+        and int(item["rally_number"]) == int(segment["rally_number"])
+    ]
+    if events_before_rally:
+        event_texts = [row["Ereignis"] for row in _video_event_rows(selected_session, events_before_rally)]
+        st.caption("Vor diesem Punkt: " + " · ".join(event_texts))
 
 
 def _undo_last_rally_and_refresh(session: dict[str, Any]) -> None:
@@ -3332,7 +3406,8 @@ def _render_existing_video_analysis_setup(
     if selected_source:
         st.caption(
             f"Ausgewählt: {_video_source_label(selected_source)}. "
-            "Jetzt legst du Kader, Aufschlagrecht und Startläufer fest."
+            "Die geschnittenen Punkte öffnest du separat auf dem Laptop oder iPad im Tab "
+            "«Punkte ansehen»; auf diesem Gerät bleibt die Analyse ohne Videoplayer."
         )
     else:
         st.caption("Die Analyse wird ohne Video vorbereitet.")
@@ -3453,7 +3528,10 @@ def _render_match_setup(roster: tuple[Any, ...], player_label: Callable[[Any], s
         options=[None, *source_map],
         format_func=lambda source_id: _video_source_label(source_map.get(source_id)),
         key="new_match_video_source",
-        help="Du kannst ohne Video analysieren oder ein Matchprojekt mit mehreren Satzvideos auswählen.",
+        help=(
+            "Verknüpft die Schnittpunkte mit dieser Analyse. Der Videoplayer bleibt separat im Tab "
+            "«Punkte ansehen», damit du auf zwei Geräten arbeiten kannst."
+        ),
     )
     player_map = _players_by_id(roster)
     default_lineup, preferred_lineup_roles = _match_setup_lineup_defaults(roster)
@@ -4955,7 +5033,6 @@ def _render_live_session(
         session = {**session, "state": normalized_state}
 
     _render_scoreboard(session)
-    _render_analysis_video_clip(session)
     _render_lineup_controls(session, roster, player_label)
     state = session["state"]
     show_serve_receive = state.get("phase") == "serve_receive"
@@ -6082,7 +6159,9 @@ def _render_analysis(roster: tuple[Any, ...]) -> None:
 
 def render_match_analysis(roster: tuple[Any, ...], player_label: Callable[[Any], str]) -> None:
     ensure_demo_match(roster)
-    live_tab, cut_tab, analysis_tab = st.tabs(["Punkte analysieren", "Video schneiden", "Analyse ansehen"])
+    live_tab, cut_tab, viewer_tab, analysis_tab = st.tabs(
+        ["Punkte analysieren", "Video schneiden", "Punkte ansehen", "Analyse ansehen"]
+    )
     session_id = st.session_state.get("live_match_session_id")
     session = get_match_session(session_id) if session_id else None
     if session is None:
@@ -6092,6 +6171,8 @@ def render_match_analysis(roster: tuple[Any, ...], player_label: Callable[[Any],
             _render_video_project_setup()
         else:
             _render_video_cutter(session, roster)
+    with viewer_tab:
+        _render_cut_point_viewer()
     with live_tab:
         if session is None:
             st.info(
