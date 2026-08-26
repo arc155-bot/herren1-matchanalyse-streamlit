@@ -73,7 +73,12 @@ def load_roster(base_dir: Path) -> tuple[Player, ...]:
         players = players_from_rows(payload)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, KeyError):
         return DEFAULT_ROSTER
-    return players or DEFAULT_ROSTER
+    if not players:
+        return DEFAULT_ROSTER
+    updated_players = _apply_h1_roster_updates(players)
+    if updated_players != players:
+        save_roster(base_dir, updated_players)
+    return updated_players
 
 
 def save_roster(base_dir: Path, players: Iterable[Player]) -> Path:
@@ -162,6 +167,31 @@ def _unique(values: Iterable[str]) -> tuple[str, ...]:
             seen.add(value)
             result.append(value)
     return tuple(result)
+
+
+def _apply_h1_roster_updates(players: tuple[Player, ...]) -> tuple[Player, ...]:
+    """Apply confirmed Herren-1 corrections to an already saved roster."""
+
+    updated: list[Player] = []
+    for player in players:
+        if player.id == "h1_d2" and player.name != "Labisan":
+            player = Player(
+                id=player.id,
+                name="Labisan",
+                primary_position=player.primary_position,
+                secondary_positions=player.secondary_positions,
+                backup_setter=player.backup_setter,
+            )
+        updated.append(player)
+
+    has_zaki = any(player.id == "h1_a3" or player.name.casefold() == "zaki" for player in updated)
+    if not has_zaki:
+        insert_at = next(
+            (index + 1 for index, player in enumerate(updated) if player.id == "h1_a2"),
+            len(updated),
+        )
+        updated.insert(insert_at, Player("h1_a3", "Zaki", "outside"))
+    return _deduplicate(updated)
 
 
 def _deduplicate(players: Iterable[Player]) -> tuple[Player, ...]:
