@@ -30,9 +30,10 @@ DEFAULT_ROSTER: tuple[Player, ...] = (
     Player("h1_s1", "Giovanni", "setter"),
     Player("h1_s2", "Matthäus", "setter"),
     Player("h1_d1", "Raschad", "opposite"),
-    Player("h1_d2", "Labi", "opposite"),
+    Player("h1_d2", "Labisan", "opposite"),
     Player("h1_a1", "Rohan", "outside"),
     Player("h1_a2", "Mike", "outside"),
+    Player("h1_a3", "Zaki", "outside"),
     Player(
         "h1_f1",
         "Cameron",
