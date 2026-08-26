@@ -1852,7 +1852,12 @@ def _default_player(players: list[Any], positions: tuple[str, ...]) -> Any:
 
 def _session_label(session: dict[str, Any]) -> str:
     state = session["state"]
-    video_prefix = f"{session['video_title']} · " if session.get("video_title") else ""
+    video_count = len(_video_sources_by_set(session))
+    video_prefix = (
+        f"{video_count} {'Satzvideo' if video_count == 1 else 'Satzvideos'} · "
+        if video_count
+        else ""
+    )
     return (
         f"{video_prefix}{session['match_date']} · {session['opponent']} · "
         f"Sätze {state.get('our_sets', 0)}:{state.get('opponent_sets', 0)}"
@@ -1877,16 +1882,107 @@ def _video_fallback_title(video_url: str) -> str:
     return f"YouTube · {video_id}" if video_id else "Video ohne Titel"
 
 
+def _video_sources_by_set(session: dict[str, Any]) -> dict[int, dict[str, str]]:
+    """Return the YouTube source assigned to each set of one match."""
+
+    raw_sources = session.get("state", {}).get("video_sources_by_set") or {}
+    sources: dict[int, dict[str, str]] = {}
+    if isinstance(raw_sources, dict):
+        for raw_set_number, raw_source in raw_sources.items():
+            if not isinstance(raw_source, dict):
+                continue
+            try:
+                set_number = int(raw_set_number)
+            except (TypeError, ValueError):
+                continue
+            video_url = str(raw_source.get("url") or "").strip()
+            if not 1 <= set_number <= 5 or not video_url:
+                continue
+            sources[set_number] = {
+                "url": video_url,
+                "title": str(raw_source.get("title") or "").strip(),
+            }
+    if not sources and session.get("video_url"):
+        sources[1] = {
+            "url": str(session.get("video_url") or ""),
+            "title": str(session.get("video_title") or ""),
+        }
+    return dict(sorted(sources.items()))
+
+
+def _video_source_for_set(session: dict[str, Any], set_number: int) -> dict[str, str] | None:
+    sources = _video_sources_by_set(session)
+    if int(set_number) in sources:
+        return sources[int(set_number)]
+    if int(session.get("state", {}).get("video_sources_version") or 0) < 2 and session.get("video_url"):
+        return {
+            "url": str(session.get("video_url") or ""),
+            "title": str(session.get("video_title") or ""),
+        }
+    return None
+
+
+def _set_session_video_source(
+    session: dict[str, Any],
+    *,
+    set_number: int,
+    video_url: str,
+    video_title: str,
+) -> None:
+    """Persist one set video and migrate legacy single-video projects safely."""
+
+    session_id = int(session["id"])
+    state = deepcopy(session.get("state", {}))
+    sources = _video_sources_by_set(session)
+    if int(state.get("video_sources_version") or 0) < 2 and session.get("video_url"):
+        legacy_source = {
+            "url": str(session.get("video_url") or ""),
+            "title": str(session.get("video_title") or ""),
+        }
+        legacy_sets = {
+            int(item["set_number"])
+            for item in list_match_video_segments(session_id=session_id)
+            if item.get("set_number") is not None
+        }
+        for legacy_set in legacy_sets or {1}:
+            sources.setdefault(legacy_set, legacy_source)
+
+    if video_url:
+        sources[int(set_number)] = {
+            "url": video_url.strip(),
+            "title": video_title.strip(),
+        }
+    else:
+        sources.pop(int(set_number), None)
+
+    state["video_sources_version"] = 2
+    state["video_sources_by_set"] = {
+        str(source_set): source for source_set, source in sorted(sources.items())
+    }
+    _save_state(session_id, state)
+    primary_source = sources[min(sources)] if sources else {"url": "", "title": ""}
+    update_match_video_url(
+        session_id=session_id,
+        video_url=primary_source["url"],
+        video_title=primary_source["title"],
+    )
+    session["state"] = state
+    session["video_url"] = primary_source["url"]
+    session["video_title"] = primary_source["title"]
+
+
 def _video_source_sessions() -> list[dict[str, Any]]:
     sources = []
     for candidate in list_match_sessions():
-        if not candidate.get("video_url"):
+        video_sources = _video_sources_by_set(candidate)
+        if not video_sources:
             continue
         segment_count = len(list_match_video_segments(session_id=int(candidate["id"])))
         if not segment_count:
             continue
         source = dict(candidate)
         source["segment_count"] = segment_count
+        source["video_count"] = len(video_sources)
         sources.append(source)
     return sources
 
@@ -1894,36 +1990,46 @@ def _video_source_sessions() -> list[dict[str, Any]]:
 def _video_source_label(session: dict[str, Any] | None) -> str:
     if session is None:
         return "Ohne Video analysieren"
-    title = session.get("video_title") or _video_fallback_title(session.get("video_url", ""))
+    video_count = int(session.get("video_count") or len(_video_sources_by_set(session)))
     segment_count = int(session.get("segment_count", 0))
     point_label = "Punkt" if segment_count == 1 else "Punkte"
-    return f"{title} · {session['match_date']} · {session['opponent']} · {segment_count} {point_label}"
+    video_label = "Satzvideo" if video_count == 1 else "Satzvideos"
+    return (
+        f"{session['match_date']} · {session['opponent']} · "
+        f"{video_count} {video_label} · {segment_count} {point_label}"
+    )
 
 
-def _render_video_link_editor(session: dict[str, Any], *, key_prefix: str) -> None:
+def _render_video_link_editor(
+    session: dict[str, Any],
+    *,
+    key_prefix: str,
+    set_number: int,
+) -> None:
     session_id = int(session["id"])
+    source = _video_source_for_set(session, set_number) or {"url": "", "title": ""}
     st.caption(
-        "Öffentliche und nicht gelistete YouTube-Videos funktionieren. Ohne Link kannst du "
-        "die Matchanalyse weiterhin normal verwenden."
+        "Ordne jedem Satz sein eigenes Video zu. Öffentliche und nicht gelistete "
+        "YouTube-Videos funktionieren."
     )
     url_value = st.text_input(
-        "YouTube-Link",
-        value=session.get("video_url", ""),
+        f"YouTube-Link für Satz {set_number}",
+        value=source["url"],
         placeholder="https://www.youtube.com/watch?v=…",
-        key=f"{key_prefix}_video_url_{session_id}",
+        key=f"{key_prefix}_video_url_{session_id}_{set_number}",
     )
     title_value = st.text_input(
         "Videotitel",
-        value=session.get("video_title", ""),
+        value=source["title"],
         placeholder="Wird beim Laden automatisch aus YouTube übernommen",
-        key=f"{key_prefix}_video_title_{session_id}",
+        key=f"{key_prefix}_video_title_{session_id}_{set_number}",
     )
     save_url, remove_url = st.columns([2, 1])
     if save_url.button(
         "Videolink speichern",
         type="primary",
         width="stretch",
-        key=f"{key_prefix}_save_video_url_{session_id}",
+        key=f"{key_prefix}_save_video_url_{session_id}_{set_number}",
     ):
         try:
             normalized_url = normalize_youtube_url(url_value)
@@ -1934,21 +2040,27 @@ def _render_video_link_editor(session: dict[str, Any], *, key_prefix: str) -> No
                 st.error("Bitte zuerst einen YouTube-Link einfügen.")
             else:
                 saved_title = title_value.strip()
-                if not saved_title and normalized_url != session.get("video_url"):
+                if not saved_title and normalized_url != source["url"]:
                     saved_title = _video_fallback_title(normalized_url)
-                update_match_video_url(
-                    session_id=session_id,
+                _set_session_video_source(
+                    session,
+                    set_number=set_number,
                     video_url=normalized_url,
-                    video_title=saved_title or session.get("video_title", ""),
+                    video_title=saved_title or source["title"],
                 )
                 st.rerun(scope="app")
     if remove_url.button(
         "Link entfernen",
-        disabled=not bool(session.get("video_url")),
+        disabled=not bool(source["url"]),
         width="stretch",
-        key=f"{key_prefix}_remove_video_url_{session_id}",
+        key=f"{key_prefix}_remove_video_url_{session_id}_{set_number}",
     ):
-        update_match_video_url(session_id=session_id, video_url="", video_title="")
+        _set_session_video_source(
+            session,
+            set_number=set_number,
+            video_url="",
+            video_title="",
+        )
         st.rerun(scope="app")
 
 
@@ -2115,64 +2227,89 @@ def _render_video_marker_form(
 def _render_video_cutter(session: dict[str, Any], roster: tuple[Any, ...]) -> None:
     session_id = int(session["id"])
     cut_state = _video_cut_state(session)
+    current_set = int(cut_state["current_set"])
     _render_video_cut_scoreboard(session, cut_state)
     if st.button(
-        "Anderes Video oder Match öffnen",
+        "Anderes Matchprojekt öffnen",
         width="stretch",
         key=f"leave_video_cut_{session_id}",
     ):
         st.session_state.pop("live_match_session_id", None)
         st.rerun(scope="app")
-    with st.expander("YouTube-Video ändern", expanded=not bool(session.get("video_url"))):
-        _render_video_link_editor(session, key_prefix="cut")
-    video_url = session.get("video_url", "")
+    video_sources = _video_sources_by_set(session)
+    if video_sources:
+        st.caption(
+            "Hinterlegte Satzvideos: "
+            + " · ".join(f"Satz {set_number}" for set_number in video_sources)
+        )
+    selected_set_key = f"cut_video_editor_set_{session_id}"
+    tracked_set_key = f"cut_video_editor_current_set_{session_id}"
+    if st.session_state.get(tracked_set_key) != current_set:
+        st.session_state[selected_set_key] = current_set
+        st.session_state[tracked_set_key] = current_set
+    current_source = _video_source_for_set(session, current_set)
+    with st.expander("Satzvideos verwalten", expanded=current_source is None):
+        editor_set_number = st.selectbox(
+            "Video gehört zu Satz",
+            options=[1, 2, 3, 4, 5],
+            key=selected_set_key,
+        )
+        _render_video_link_editor(
+            session,
+            key_prefix="cut",
+            set_number=int(editor_set_number),
+        )
+    current_source = _video_source_for_set(session, current_set)
+    video_url = current_source["url"] if current_source else ""
     if not video_url:
         st.info(
-            "Füge oben zuerst den YouTube-Link ein. Wenn du ohne Video analysieren willst, "
-            "wechsle direkt zu «Punkte analysieren»."
+            f"Füge unter «Satzvideos verwalten» zuerst das Video für Satz {current_set} ein. "
+            "Jeder neue Satz startet wieder bei 00:00."
         )
         return
 
-    segments = list_match_video_segments(session_id=session_id)
-    video_events = list_match_video_events(session_id=session_id)
+    all_segments = list_match_video_segments(session_id=session_id)
+    segments = [item for item in all_segments if int(item["set_number"]) == current_set]
+    all_video_events = list_match_video_events(session_id=session_id)
+    video_events = [item for item in all_video_events if int(item["set_number"]) == current_set]
     last_segment_end = int(segments[-1]["end_seconds"]) if segments else 0
     last_event_time = int(video_events[-1]["video_seconds"]) if video_events else 0
     last_end = max(last_segment_end, last_event_time)
-    pending_start_key = f"video_cut_pending_start_{session_id}"
-    pending_end_key = f"video_cut_pending_end_{session_id}"
-    event_nonce_key = f"video_cut_event_nonce_{session_id}"
-    resume_token_key = f"video_cut_resume_token_{session_id}"
-    seek_token_key = f"video_cut_seek_token_{session_id}"
-    seek_seconds_key = f"video_cut_seek_seconds_{session_id}"
-    marker_action_key = f"video_cut_marker_action_{session_id}"
-    marker_seconds_key = f"video_cut_marker_seconds_{session_id}"
+    pending_start_key = f"video_cut_pending_start_{session_id}_{current_set}"
+    pending_end_key = f"video_cut_pending_end_{session_id}_{current_set}"
+    event_nonce_key = f"video_cut_event_nonce_{session_id}_{current_set}"
+    resume_token_key = f"video_cut_resume_token_{session_id}_{current_set}"
+    seek_token_key = f"video_cut_seek_token_{session_id}_{current_set}"
+    seek_seconds_key = f"video_cut_seek_seconds_{session_id}_{current_set}"
+    marker_action_key = f"video_cut_marker_action_{session_id}_{current_set}"
+    marker_seconds_key = f"video_cut_marker_seconds_{session_id}_{current_set}"
     st.session_state.setdefault(resume_token_key, 0)
     st.session_state.setdefault(seek_token_key, 0)
     st.session_state.setdefault(seek_seconds_key, last_end)
 
     event = YOUTUBE_CUTTER(
         video_id=_youtube_video_id(video_url),
-        video_title=session.get("video_title", ""),
+        video_title=current_source.get("title", "") if current_source else "",
         start_seconds=int(st.session_state[seek_seconds_key]),
         pending_start=st.session_state.get(pending_start_key),
         pending_end=st.session_state.get(pending_end_key),
         pending_marker=st.session_state.get(marker_action_key),
         resume_token=int(st.session_state[resume_token_key]),
         seek_token=int(st.session_state[seek_token_key]),
-        key=f"youtube_cutter_{session_id}",
+        key=f"youtube_cutter_{session_id}_{current_set}",
         default=None,
     )
     if isinstance(event, dict) and event.get("nonce") != st.session_state.get(event_nonce_key):
         st.session_state[event_nonce_key] = event.get("nonce")
         if event.get("action") == "metadata":
             youtube_title = str(event.get("title") or "").strip()
-            if youtube_title and youtube_title != session.get("video_title"):
-                update_match_video_url(
-                    session_id=session_id,
+            if youtube_title and current_source and youtube_title != current_source.get("title"):
+                _set_session_video_source(
+                    session,
+                    set_number=current_set,
                     video_url=video_url,
                     video_title=youtube_title,
                 )
-                session["video_title"] = youtube_title
         elif event.get("action") == "start":
             st.session_state[pending_start_key] = int(event.get("seconds") or 0)
             st.session_state.pop(pending_end_key, None)
@@ -2242,9 +2379,9 @@ def _render_video_cutter(session: dict[str, Any], roster: tuple[Any, ...]) -> No
             st.session_state[resume_token_key] += 1
             st.rerun(scope="app")
 
-    if segments:
+    if all_segments:
         undo_column, count_column = st.columns([1, 2])
-        count_column.metric("Geschnittene Punkte", len(segments))
+        count_column.metric(f"Punkte in Satz {current_set}", len(segments))
         if undo_column.button(
             "↩ Letzten Schnitt zurück",
             width="stretch",
@@ -2258,7 +2395,7 @@ def _render_video_cutter(session: dict[str, Any], roster: tuple[Any, ...]) -> No
                 removed_segment = next(
                     (
                         segment
-                        for segment in reversed(segments)
+                        for segment in reversed(all_segments)
                         if int(segment["set_number"]) == int(removed["set_number"])
                         and int(segment["rally_number"]) == int(removed["rally_number"])
                     ),
@@ -2269,15 +2406,19 @@ def _render_video_cutter(session: dict[str, Any], roster: tuple[Any, ...]) -> No
                         segment_id=int(removed_segment["id"]),
                         session_id=session_id,
                     )
-                    st.session_state[seek_seconds_key] = int(removed_segment["start_seconds"])
-                    st.session_state[seek_token_key] += 1
+                    restored_set = int(restored_cut_state["current_set"])
+                    restored_seek_key = f"video_cut_seek_seconds_{session_id}_{restored_set}"
+                    restored_seek_token_key = f"video_cut_seek_token_{session_id}_{restored_set}"
+                    st.session_state[restored_seek_key] = int(removed_segment["start_seconds"])
+                    st.session_state.setdefault(restored_seek_token_key, 0)
+                    st.session_state[restored_seek_token_key] += 1
                 updated_state = deepcopy(session["state"])
                 updated_state["video_cut_state"] = restored_cut_state
                 _save_state(session_id, updated_state)
                 st.session_state.pop(pending_start_key, None)
                 st.session_state.pop(pending_end_key, None)
                 st.rerun(scope="app")
-        with st.expander(f"Gespeicherte Punkte ({len(segments)})"):
+        with st.expander(f"Gespeicherte Punkte in Satz {current_set} ({len(segments)})"):
             st.dataframe(
                 [
                     {
@@ -2321,15 +2462,22 @@ def _render_analysis_video_clip(session: dict[str, Any]) -> None:
     if "analysis_video_session_id" in state:
         source_session_id = state.get("analysis_video_session_id")
     else:
-        source_session_id = session.get("id") if session.get("video_url") else None
+        source_session_id = session.get("id") if _video_sources_by_set(session) else None
     if source_session_id is None:
         return
     source_session = get_match_session(int(source_session_id))
-    if not source_session or not source_session.get("video_url"):
-        st.info("Das ausgewählte Video ist nicht mehr verfügbar. Die Analyse geht ohne Video weiter.")
+    if not source_session or not _video_sources_by_set(source_session):
+        st.info("Die ausgewählten Satzvideos sind nicht mehr verfügbar. Die Analyse geht ohne Video weiter.")
         return
-    video_url = source_session["video_url"]
     target = (int(state.get("current_set") or 1), int(state.get("rally_number") or 1))
+    video_source = _video_source_for_set(source_session, target[0])
+    if not video_source:
+        st.info(
+            f"Für Satz {target[0]} ist noch kein Video hinterlegt. "
+            "Du kannst trotzdem ohne Video weiteranalysieren."
+        )
+        return
+    video_url = video_source["url"]
     segment = next(
         (
             item
@@ -2345,7 +2493,7 @@ def _render_analysis_video_clip(session: dict[str, Any]) -> None:
         )
         return
     winner = TEAM_NAME if segment.get("winner") == "us" else source_session["opponent"]
-    video_title = source_session.get("video_title") or _video_fallback_title(video_url)
+    video_title = video_source.get("title") or _video_fallback_title(video_url)
     with st.expander(
         f"🎬 {video_title} · {_video_point_label(target)} · {winner}",
         expanded=True,
@@ -3094,7 +3242,7 @@ def _session_analysis_ready(session: dict[str, Any]) -> bool:
 def _render_video_project_setup() -> None:
     open_sessions = list_match_sessions(active_only=True)
     if open_sessions:
-        st.markdown("### Vorhandenes Match oder Video öffnen")
+        st.markdown("### Vorhandenes Matchprojekt öffnen")
         resume_session = st.selectbox(
             "Vorhandenes Match",
             options=open_sessions,
@@ -3107,8 +3255,11 @@ def _render_video_project_setup() -> None:
             st.rerun()
         st.markdown("---")
 
-    st.markdown("### Neues Video schneiden")
-    st.caption("Für diesen Schritt brauchst du noch keinen Kader und keine Startaufstellung.")
+    st.markdown("### Neues Match mit Satzvideos schneiden")
+    st.caption(
+        "Starte mit dem Video von Satz 1. Sobald der Satz fertig geschnitten ist, "
+        "fügst du das Video von Satz 2 hinzu."
+    )
     setup_date, setup_opponent = st.columns([1, 2])
     match_date = setup_date.date_input("Datum", value=date.today(), key="new_video_date")
     opponent = setup_opponent.text_input(
@@ -3117,7 +3268,7 @@ def _render_video_project_setup() -> None:
         key="new_video_opponent",
     )
     video_url_input = st.text_input(
-        "YouTube-Link",
+        "YouTube-Link · Satz 1",
         placeholder="https://www.youtube.com/watch?v=…",
         key="new_video_project_url",
     )
@@ -3126,7 +3277,7 @@ def _render_video_project_setup() -> None:
         placeholder="Wird beim Laden automatisch aus YouTube übernommen",
         key="new_video_project_title",
     )
-    if st.button("Video öffnen und schneiden", type="primary", width="stretch"):
+    if st.button("Satz 1 öffnen und schneiden", type="primary", width="stretch"):
         try:
             video_url = normalize_youtube_url(video_url_input)
         except ValueError as error:
@@ -3137,14 +3288,19 @@ def _render_video_project_setup() -> None:
         elif not video_url:
             st.error("Bitte den YouTube-Link einfügen.")
         else:
+            video_title = video_title_input.strip() or _video_fallback_title(video_url)
             initial_state = new_match_state("opponent")
             initial_state["video_cut_state"] = new_video_cut_state()
+            initial_state["video_sources_version"] = 2
+            initial_state["video_sources_by_set"] = {
+                "1": {"url": video_url, "title": video_title}
+            }
             session_id = create_match_session(
                 match_date=match_date.isoformat(),
                 opponent=opponent,
                 lineup_player_ids=[],
                 video_url=video_url,
-                video_title=video_title_input.strip() or _video_fallback_title(video_url),
+                video_title=video_title,
                 state=initial_state,
             )
             st.session_state.live_match_session_id = session_id
@@ -3161,7 +3317,7 @@ def _render_existing_video_analysis_setup(
     video_sources = _video_source_sessions()
     source_map = {int(source["id"]): source for source in video_sources}
     selected_source_id = st.selectbox(
-        "Geschnittenes Video für diese Analyse (optional)",
+        "Geschnittenes Match mit Satzvideos (optional)",
         options=[None, *source_map],
         index=0,
         format_func=lambda source_id: _video_source_label(source_map.get(source_id)),
@@ -3254,6 +3410,13 @@ def _render_existing_video_analysis_setup(
                 lineup_roles=lineup_roles,
             )
             analysis_state["video_cut_state"] = _video_cut_state(session)
+            if session.get("state", {}).get("video_sources_by_set"):
+                analysis_state["video_sources_version"] = int(
+                    session["state"].get("video_sources_version") or 2
+                )
+                analysis_state["video_sources_by_set"] = deepcopy(
+                    session["state"]["video_sources_by_set"]
+                )
             analysis_state["analysis_video_session_id"] = selected_source_id
             _save_state(
                 session_id,
@@ -3286,11 +3449,11 @@ def _render_match_setup(roster: tuple[Any, ...], player_label: Callable[[Any], s
     video_sources = _video_source_sessions()
     source_map = {int(source["id"]): source for source in video_sources}
     selected_source_id = st.selectbox(
-        "Geschnittenes Video (optional)",
+        "Geschnittenes Match mit Satzvideos (optional)",
         options=[None, *source_map],
         format_func=lambda source_id: _video_source_label(source_map.get(source_id)),
         key="new_match_video_source",
-        help="Du kannst bewusst ohne Video analysieren oder ein zuvor geschnittenes Video auswählen.",
+        help="Du kannst ohne Video analysieren oder ein Matchprojekt mit mehreren Satzvideos auswählen.",
     )
     player_map = _players_by_id(roster)
     default_lineup, preferred_lineup_roles = _match_setup_lineup_defaults(roster)
